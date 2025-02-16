@@ -47,7 +47,7 @@ poblacion=poblacion.rename(columns={'Unnamed: 1':'Edad','Unnamed: 2':'Casos','Un
 #%% filtro centros_cult dejando solo las columnas correspondietnes
 
 centros_cult=centros_cult[['Cod_Loc','ID_PROV','ID_DEPTO','Provincia','Departamento',
-                           'Localidad','Nombre','Domicilio','Telefóno','Mail ','Web','Capacidad']]
+                           'Localidad','Nombre','Domicilio','Capacidad']]
 
 #%% filtro padron_ee dejando solo las columnas correspondientes
 
