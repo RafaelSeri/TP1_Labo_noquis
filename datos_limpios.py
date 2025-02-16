@@ -58,5 +58,12 @@ padron_ee=padron_ee[['Jurisdicción','Cueanexo','Nombre','Sector','Domicilio','T
                      'Nivel inicial - Jardín de infantes','Primario','Secundario',
                      'Secundario - INET','SNU','SNU - INET']]
 
+padron_ee_limpio=dd.sql("""
+SELECT Jurisdicción, Cueanexo, Nombre, 'Código de localidad',
+        Departamento, 'Nivel inicial - Jardín maternal', 'Nivel inicial - Jardín de infantes',
+        Primario, Secundario, 'Secundario - INET'
+FROM padron_ee
+WHERE Común='1'                 
+                 """).df()
 
 
