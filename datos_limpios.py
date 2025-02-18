@@ -116,40 +116,133 @@ ORDER BY p1.id_depto
                    """).df()
 
 
+provs=dd.sql("""
+SELECT DISTINCT p.id_depto,e.Cueanexo
+FROM pobl_grupos AS p
+LEFT JOIN ee_limpio AS e
+ON p.id_depto=e.id_depto
+             """).df()
+             
+consulta=dd.sql("""
+SELECT g.*,p.Provincia
+FROM pobl_grupos AS g
+LEFT JOIN provs AS p
+ON g.id_depto=p.ID_DEPTO                
+                """).df()
+                
+consulta2=dd.sql("""
+SELECT c1.*
+                 
+                 """)                
+
+x=provs['id_depto'].value_counts()
+
 departamento=dd.sql("""
 SELECT DISTINCT p.depto, p.id_depto, e.prov, p.pobl_jardin, p.pobl_primaria,
                 p.pobl_secundaria, p.pobl_total
 FROM pobl_grupos AS p
-LEFT JOIN (SELECT DISTINCT Jurisdicción AS prov, (CASE WHEN Departamento LIKE '%Comuna%'
-                            THEN 'CABA' ELSE Departamento END) AS depto
-           FROM padron_ee) AS e
-ON p.depto=e.depto
+
 ORDER BY p.id_depto                 
                 """).df()
 
 #%% filtro centros_cult dejando solo las columnas correspondietnes
+cc_uno=centros_cult[['ID_DEPTO','Nombre', 'Mail ','Capacidad']]
+cc_uno['ID_cc']=0
 
-centros_cult=centros_cult[['Cod_Loc','ID_PROV','ID_DEPTO','Provincia','Departamento',
-                           'Localidad','Nombre','Domicilio', 'Mail ','Capacidad']]
+for i,e in cc_uno.iterrows():
+        cc_uno.loc[i,'ID_cc']=i
 
-x=centros_cult[['Nombre','Domicilio']].value_counts()
+cc_uno=cc_uno.rename(columns={'Mail ':'Mail'})
+            
+cc_limpio=cc_uno[['ID_cc','ID_DEPTO','Nombre','Capacidad']]
 
+#%% para crear usa_mail uso cc_uno
+
+
+#separar_mails(x) toma un string y devuelve una lista con 
+def separar_mails(x):
+    return x.split()
+        
+#comienzo creando la tabla mail_cc
+mail_centro=cc_uno[['ID_cc','Mail']]
+
+#saco los valores null
+mail_centro=mail_centro.dropna()
+
+#creo un df que en donde cada fila tiene un ID_cc y un mail correspondiente 
+filas=[]
+for i,e in mail_centro.iterrows():
+    mails=separar_mails(e['Mail'])
+    for j in mails:
+        filas+=[{'ID_cc':e['ID_cc'],'Mail':j}]
+mail=pd.DataFrame(filas)
+
+#mail_aux recupera los ID_cc que tenían '' en Mail
+usa_mail_aux=dd.sql("""
+SELECT m1.ID_CC, m2.Mail
+FROM mail_centro AS m1
+LEFT JOIN mail AS m2
+ON m1.ID_cc=m2.ID_cc     
+ORDER BY m1.ID_cc      
+               """).df()
+
+usa_mail=dd.sql("""
+SELECT u.*
+FROM usa_mail_aux AS u
+INNER JOIN mail_centros AS m
+ON u.Mail=m.Mail
+                
+                """).df()
+                
+#%%creo la tabla para mail_centros
+
+mail_centros=dd.sql("""
+SELECT DISTINCT Mail
+FROM usa_mail_aux
+WHERE Mail LIKE '%@%'                   
+                    """).df()
+
+
+#%%
 #%% filtro padron_ee dejando solo las columnas correspondientes
 
-padron_ee.columns
-
-ee_limpio=padron_ee[['Cueanexo','Nombre','Domicilio','Código de localidad',
-                     'Localidad','Departamento','Común','Nivel inicial - Jardín maternal',
+#creo un df con las columnas que me interesan
+ee_columns=padron_ee[['Cueanexo','Departamento','Común','Nivel inicial - Jardín maternal',
                      'Nivel inicial - Jardín de infantes','Primario','Secundario',
                      'Secundario - INET']]
 
-padron_ee_limpio=dd.sql("""
-SELECT Jurisdicción, Cueanexo, Nombre, Domicilio, Teléfono,
-        Departamento, Mail, 'Nivel inicial - Jardín maternal', 'Nivel inicial - Jardín de infantes',
-        Primario, Secundario, 'Secundario - INET'
-FROM padron_ee
-WHERE Común='1'                 
+#convierto en string los valores de Común
+ee_columns[['Cueanexo','Departamento','Común','Nivel inicial - Jardín maternal','Nivel inicial - Jardín de infantes',
+            'Primario','Secundario','Secundario - INET']] = ee_columns[['Cueanexo','Departamento','Común','Nivel inicial - Jardín maternal',
+                     'Nivel inicial - Jardín de infantes','Primario','Secundario','Secundario - INET']].astype(str)
+
+ee_comun=dd.sql("""
+SELECT Cueanexo, Departamento, "Nivel inicial - Jardín maternal",
+       "Nivel inicial - Jardín de infantes", Primario, Secundario,
+       "Secundario - INET"
+FROM ee_columns
+WHERE Común='1'               
+                """).df()
+
+ee_tipos=dd.sql("""
+SELECT Cueanexo, (CASE WHEN Departamento LIKE '%Comuna%' THEN 'CABA' ELSE Departamento END) AS Departamento,
+                (CASE WHEN "Nivel inicial - Jardín maternal"='1' OR "Nivel inicial - Jardín de infantes"='1' THEN 'J' ELSE '' END) AS jardin,
+                (CASE WHEN Primario='1' THEN 'P' ELSE '' END) AS primario, (CASE WHEN Secundario='1' OR "Secundario - INET"='1' THEN 'S' ELSE '' END) AS secundario
+FROM ee_comun
+               """).df()
+               
+ee_tipos['tipo_edu']=ee_tipos['jardin']+ee_tipos['primario']+ee_tipos['secundario']
+
+
+
+ee_tipos=ee_tipos[['Cueanexo','Departamento','tipo_edu']]         
+
+ee_limpio=dd.sql("""
+SELECT DISTINCT p.id_depto,e.Cueanexo,e.tipo_edu
+FROM ee_tipos AS e
+INNER JOIN pobl_grupos AS p
+ON p.depto=e.Departamento                 
                  """).df()
-
-x=centros_cult[['Latitud','Longitud']].value_counts()
-
+                 
+                 
+                 
