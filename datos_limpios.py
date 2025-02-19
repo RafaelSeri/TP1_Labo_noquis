@@ -17,8 +17,7 @@ def codigo_area(x):
     for i in x:
         if i in ['0','1','2','3','4','5','6','7','8','9']:
             y+=i
-    return y
-        
+    return y    
 
 #le asigno a la columna 'area' un nuevo valor correspdiente al código de área
 skip=0
@@ -32,6 +31,7 @@ for i,e in pobl_limpio.iterrows():
     if skip==0:
         pobl_limpio.loc[i,'id_depto']=codigo_area(y)
         pobl_limpio.loc[i,'depto']=z
+        pobl_limpio.loc[i,'prov']
 
 #saco las filas que no deben estar
 for i,e in pobl_limpio.iterrows():
@@ -115,63 +115,56 @@ WHERE p1.nivel='Jardin'
 ORDER BY p1.id_depto
                    """).df()
 
-
-provs=dd.sql("""
-SELECT DISTINCT p.id_depto,e.Cueanexo
-FROM pobl_grupos AS p
-LEFT JOIN ee_limpio AS e
-ON p.id_depto=e.id_depto
-             """).df()
-             
-consulta=dd.sql("""
-SELECT g.*,p.Provincia
-FROM pobl_grupos AS g
-LEFT JOIN provs AS p
-ON g.id_depto=p.ID_DEPTO                
+#junto las provincias con sus respectivos id_prov
+id_provs=dd.sql("""
+SELECT DISTINCT ID_PROV, Provincia AS prov
+FROM centros_cult                
                 """).df()
-                
-consulta2=dd.sql("""
-SELECT c1.*
-                 
-                 """)                
 
-x=provs['id_depto'].value_counts()
+#calculo y asigno id_prov a cada depto                
+departamento_prov=dd.sql("""
+SELECT FLOOR(id_depto/1000) AS id_prov, depto, id_depto, pobl_jardin,
+        pobl_primaria, pobl_secundaria, pobl_total                   
+FROM pobl_grupos
+                    """).df()                
 
+#creo la tabla departamento con el nombre de la provincia en vez del id_prov
 departamento=dd.sql("""
-SELECT DISTINCT p.depto, p.id_depto, e.prov, p.pobl_jardin, p.pobl_primaria,
-                p.pobl_secundaria, p.pobl_total
-FROM pobl_grupos AS p
-
-ORDER BY p.id_depto                 
-                """).df()
+SELECT p.prov, d.depto, d.id_depto, d.pobl_jardin, d.pobl_primaria,
+        d.pobl_secundaria, d.pobl_total
+FROM departamento_prov AS d
+INNER JOIN id_provs AS p
+ON p.ID_PROV=d.id_prov                     
+                    """).df()
 
 #%% filtro centros_cult dejando solo las columnas correspondietnes
 cc_uno=centros_cult[['ID_DEPTO','Nombre', 'Mail ','Capacidad']]
-cc_uno['ID_cc']=0
 
+cc_uno['ID_cc']=0 #ID_cc será la clave de la tabla
+
+#asignamos un valor a ID_cc
 for i,e in cc_uno.iterrows():
         cc_uno.loc[i,'ID_cc']=i
 
 cc_uno=cc_uno.rename(columns={'Mail ':'Mail'})
             
-cc_limpio=cc_uno[['ID_cc','ID_DEPTO','Nombre','Capacidad']]
+cc_limpio=cc_uno[['ID_cc','ID_DEPTO','Capacidad']]
 
 #%% para crear usa_mail uso cc_uno
-
 
 #separar_mails(x) toma un string y devuelve una lista con 
 def separar_mails(x):
     return x.split()
         
 #comienzo creando la tabla mail_cc
-mail_centro=cc_uno[['ID_cc','Mail']]
+mail_cent=cc_uno[['ID_cc','Mail']]
 
 #saco los valores null
-mail_centro=mail_centro.dropna()
+mail_cent=mail_cent.dropna()
 
 #creo un df que en donde cada fila tiene un ID_cc y un mail correspondiente 
 filas=[]
-for i,e in mail_centro.iterrows():
+for i,e in mail_cent.iterrows():
     mails=separar_mails(e['Mail'])
     for j in mails:
         filas+=[{'ID_cc':e['ID_cc'],'Mail':j}]
@@ -180,69 +173,58 @@ mail=pd.DataFrame(filas)
 #mail_aux recupera los ID_cc que tenían '' en Mail
 usa_mail_aux=dd.sql("""
 SELECT m1.ID_CC, m2.Mail
-FROM mail_centro AS m1
+FROM mail_cent AS m1
 LEFT JOIN mail AS m2
 ON m1.ID_cc=m2.ID_cc     
 ORDER BY m1.ID_cc      
                """).df()
-
-usa_mail=dd.sql("""
-SELECT u.*
-FROM usa_mail_aux AS u
-INNER JOIN mail_centros AS m
-ON u.Mail=m.Mail
-                
-                """).df()
-                
-#%%creo la tabla para mail_centros
-
+               
+#creo la tabla para mail_centros
 mail_centros=dd.sql("""
 SELECT DISTINCT Mail
 FROM usa_mail_aux
 WHERE Mail LIKE '%@%'                   
                     """).df()
+                    
+#Creo la tabla usa_mail
+usa_mail=dd.sql("""
+SELECT u.*
+FROM usa_mail_aux AS u
+INNER JOIN mail_centros AS m
+ON u.Mail=m.Mail
+                """).df()                
 
-
-#%%
 #%% filtro padron_ee dejando solo las columnas correspondientes
 
 #creo un df con las columnas que me interesan
-ee_columns=padron_ee[['Cueanexo','Departamento','Común','Nivel inicial - Jardín maternal',
+ee_columns=padron_ee[['Cueanexo', 'Código de localidad','Departamento','Común','Nivel inicial - Jardín maternal',
                      'Nivel inicial - Jardín de infantes','Primario','Secundario',
                      'Secundario - INET']]
 
-#convierto en string los valores de Común
-ee_columns[['Cueanexo','Departamento','Común','Nivel inicial - Jardín maternal','Nivel inicial - Jardín de infantes',
-            'Primario','Secundario','Secundario - INET']] = ee_columns[['Cueanexo','Departamento','Común','Nivel inicial - Jardín maternal',
+#convierto en string los valores de Común y de las columnas de niveles educativos
+ee_columns[['Común','Nivel inicial - Jardín maternal','Nivel inicial - Jardín de infantes',
+            'Primario','Secundario','Secundario - INET']] = ee_columns[['Común','Nivel inicial - Jardín maternal',
                      'Nivel inicial - Jardín de infantes','Primario','Secundario','Secundario - INET']].astype(str)
-
+                                                                        
+#calculo los id_depto y me quedo con los ee que tengan modalidad comun                                                                        
 ee_comun=dd.sql("""
-SELECT Cueanexo, Departamento, "Nivel inicial - Jardín maternal",
-       "Nivel inicial - Jardín de infantes", Primario, Secundario,
-       "Secundario - INET"
+SELECT FLOOR("Código de localidad"/1000) AS id_depto, Cueanexo AS id_ee, Departamento,
+        "Nivel inicial - Jardín maternal", "Nivel inicial - Jardín de infantes",
+        Primario, Secundario, "Secundario - INET"
 FROM ee_columns
 WHERE Común='1'               
                 """).df()
 
-ee_tipos=dd.sql("""
-SELECT Cueanexo, (CASE WHEN Departamento LIKE '%Comuna%' THEN 'CABA' ELSE Departamento END) AS Departamento,
-                (CASE WHEN "Nivel inicial - Jardín maternal"='1' OR "Nivel inicial - Jardín de infantes"='1' THEN 'J' ELSE '' END) AS jardin,
-                (CASE WHEN Primario='1' THEN 'P' ELSE '' END) AS primario, (CASE WHEN Secundario='1' OR "Secundario - INET"='1' THEN 'S' ELSE '' END) AS secundario
+#creo columnas que me indican qué nivel de educacion tiene cada ee
+ee_limpio=dd.sql("""
+SELECT id_ee, (CASE WHEN Departamento LIKE '%Comuna%' THEN 2000 ELSE id_depto END) AS id_depto,
+                (CASE WHEN "Nivel inicial - Jardín maternal"='1' OR "Nivel inicial - Jardín de infantes"='1' THEN '1' ELSE '0' END) AS jardin,
+                (CASE WHEN Primario='1' THEN '1' ELSE '0' END) AS primario, (CASE WHEN Secundario='1' OR "Secundario - INET"='1' THEN '1' ELSE '0' END) AS secundario
 FROM ee_comun
                """).df()
-               
-ee_tipos['tipo_edu']=ee_tipos['jardin']+ee_tipos['primario']+ee_tipos['secundario']
 
+#cambio los tipos de dato de las columnas de niveles educativos a int               
+ee_limpio[['jardin','primario','secundario']]=ee_limpio[['jardin','primario','secundario']].astype(int)
 
-
-ee_tipos=ee_tipos[['Cueanexo','Departamento','tipo_edu']]         
-
-ee_limpio=dd.sql("""
-SELECT DISTINCT p.id_depto,e.Cueanexo,e.tipo_edu
-FROM ee_tipos AS e
-INNER JOIN pobl_grupos AS p
-ON p.depto=e.Departamento                 
-                 """).df()
-                 
                  
                  
