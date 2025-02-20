@@ -3,10 +3,20 @@ import duckdb as dd
 #%% cargo los datasets
 centros_cult=pd.read_csv('centros_culturales.csv')
 padron_ee=pd.read_excel('2022_padron_oficial_establecimientos_educativos.xlsx',skiprows=6)
-poblacion=pd.read_excel('padron_poblacion.xlsX')
-#%% Para crear la tabla departamento, primero filtro poblacion juntando todos los datos en una tabla
+censo=pd.read_excel('padron_poblacion.xlsX')
 
-pobl_limpio=poblacion[['Unnamed: 1', 'Unnamed: 2']] #elijo las columnas que quiero
+#%% PROCESAMIENTO DE DATOS
+
+"""
+EN ESTA SECCIÓN ESTAREMOS CREANDO LAS TABLAS DEL MODELO RELACIONAL
+ESTAS TABLAS SON:
+    departamento, poblacion, centro_cult, mail_centros, usa_mail y est_edu
+"""
+
+
+#%% Creacion de la tabla departamento
+
+pobl_limpio=censo[['Unnamed: 1', 'Unnamed: 2']] #elijo las columnas que quiero
 pobl_limpio=pobl_limpio.dropna(how='all') #saco las filas con todos valores NaN
 pobl_limpio['id_depto']='' #creo una nueva columna 'id_depto' 
 pobl_limpio['depto']='' #creo una nueva columna 'depto'
@@ -31,7 +41,6 @@ for i,e in pobl_limpio.iterrows():
     if skip==0:
         pobl_limpio.loc[i,'id_depto']=codigo_area(y)
         pobl_limpio.loc[i,'depto']=z
-        pobl_limpio.loc[i,'prov']
 
 #saco las filas que no deben estar
 for i,e in pobl_limpio.iterrows():
@@ -47,38 +56,14 @@ pobl_limpio=pobl_limpio.rename(columns={'Unnamed: 1':'Edad','Unnamed: 2':'Casos'
 for i,e in pobl_limpio.iterrows():
     pobl_limpio.loc[i,'id_depto']=int(pobl_limpio.loc[i,'id_depto'])
 
-#upper_y_sacar_tildes(x) toma un string y devuelve otro con todas las letras en
-#mayúsculas y sin las tildes
-def upper_y_sacar_tildes(x):
-    x=x.upper()
-    y=''
-    for i in x:
-        if i=='Á':
-            y+='A'
-        elif i=='É':
-            y+='E'
-        elif i=='Í':
-            y+='I'
-        elif i=='Ó':
-            y+='O'
-        elif i=='Ú':
-            y+='U'
-        else:
-            y+=i
-    return y
-
-#para mayor comodidad y consistencia con otras tablas modifico los valores de depto
-for i,e in pobl_limpio.iterrows():
-    pobl_limpio.loc[i,'depto']= upper_y_sacar_tildes(pobl_limpio.loc[i,'depto'])
-
 #elimino filas sobrantes
 pobl_limpio=pobl_limpio.iloc[:53949]
 
 #Asigno el nivel educativo a la fila correspondiente y de paso cambio valores
 #de otras columnas por temas de consistencia con otras tablas
 asign=dd.sql("""
-SELECT (CASE WHEN depto LIKE '%COMUNA%' THEN 'CABA' ELSE depto END) AS depto,
-        (CASE WHEN depto LIKE '%COMUNA%' THEN 2000 ELSE id_depto END) AS id_depto,
+SELECT (CASE WHEN depto LIKE '%Comuna%' THEN 'CABA' ELSE depto END) AS depto,
+        (CASE WHEN depto LIKE '%Comuna%' THEN 2000 ELSE id_depto END) AS id_depto,
          Edad, Casos, (CASE WHEN Edad<=4 THEN 'Jardin'
                            WHEN Edad<=12 THEN 'Primaria'
                            WHEN Edad<=17 THEN 'Secundaria' END) AS nivel
@@ -121,9 +106,11 @@ SELECT DISTINCT ID_PROV, Provincia AS prov
 FROM centros_cult                
                 """).df()
 
-#calculo y asigno id_prov a cada depto                
+#calculo y asigno id_prov a cada depto, además corrijo los id_depto de dos deptos de tiera del fuego        
 departamento_prov=dd.sql("""
-SELECT FLOOR(id_depto/1000) AS id_prov, depto, id_depto, pobl_jardin,
+SELECT FLOOR(id_depto/1000) AS id_prov, depto, (CASE WHEN id_depto=94015 THEN 94014
+                                                    WHEN id_depto=94008 THEN 94007
+                                                    ELSE id_depto END) AS id_depto, pobl_jardin,
         pobl_primaria, pobl_secundaria, pobl_total                   
 FROM pobl_grupos
                     """).df()                
@@ -131,13 +118,22 @@ FROM pobl_grupos
 #creo la tabla departamento con el nombre de la provincia en vez del id_prov
 departamento=dd.sql("""
 SELECT p.prov, d.depto, d.id_depto, d.pobl_jardin, d.pobl_primaria,
-        d.pobl_secundaria, d.pobl_total
+        d.pobl_secundaria
 FROM departamento_prov AS d
 INNER JOIN id_provs AS p
 ON p.ID_PROV=d.id_prov                     
                     """).df()
 
-#%% filtro centros_cult dejando solo las columnas correspondietnes
+#%% Creación de la tabla poblacion
+
+poblacion=dd.sql("""
+SELECT pobl_jardin, pobl_primaria, pobl_secundaria, pobl_total
+FROM departamento_prov              
+                 """).df()
+
+
+#%% Creacion de la tabla centro_cult
+
 cc_uno=centros_cult[['ID_DEPTO','Nombre', 'Mail ','Capacidad']]
 
 cc_uno['ID_cc']=0 #ID_cc será la clave de la tabla
@@ -148,9 +144,11 @@ for i,e in cc_uno.iterrows():
 
 cc_uno=cc_uno.rename(columns={'Mail ':'Mail'})
             
-cc_limpio=cc_uno[['ID_cc','ID_DEPTO','Capacidad']]
+centro_cult=cc_uno[['ID_cc','ID_DEPTO','Capacidad']]
 
-#%% para crear usa_mail uso cc_uno
+centro_cult=centro_cult.fillna(value=0)
+
+#%% creacion de la tabla mail_centros
 
 #separar_mails(x) toma un string y devuelve una lista con 
 def separar_mails(x):
@@ -185,6 +183,12 @@ SELECT DISTINCT Mail
 FROM usa_mail_aux
 WHERE Mail LIKE '%@%'                   
                     """).df()
+
+def solo_dominio(x):
+    return x.split('@')[1].split('.')[0].lower()
+
+
+#%% Creacion de la tabla usa_mail
                     
 #Creo la tabla usa_mail
 usa_mail=dd.sql("""
@@ -194,7 +198,7 @@ INNER JOIN mail_centros AS m
 ON u.Mail=m.Mail
                 """).df()                
 
-#%% filtro padron_ee dejando solo las columnas correspondientes
+#%% Ceracion de la tabla est_edu
 
 #creo un df con las columnas que me interesan
 ee_columns=padron_ee[['Cueanexo', 'Código de localidad','Departamento','Común','Nivel inicial - Jardín maternal',
@@ -216,7 +220,7 @@ WHERE Común='1'
                 """).df()
 
 #creo columnas que me indican qué nivel de educacion tiene cada ee
-ee_limpio=dd.sql("""
+est_edu=dd.sql("""
 SELECT id_ee, (CASE WHEN Departamento LIKE '%Comuna%' THEN 2000 ELSE id_depto END) AS id_depto,
                 (CASE WHEN "Nivel inicial - Jardín maternal"='1' OR "Nivel inicial - Jardín de infantes"='1' THEN '1' ELSE '0' END) AS jardin,
                 (CASE WHEN Primario='1' THEN '1' ELSE '0' END) AS primario, (CASE WHEN Secundario='1' OR "Secundario - INET"='1' THEN '1' ELSE '0' END) AS secundario
@@ -224,7 +228,61 @@ FROM ee_comun
                """).df()
 
 #cambio los tipos de dato de las columnas de niveles educativos a int               
-ee_limpio[['jardin','primario','secundario']]=ee_limpio[['jardin','primario','secundario']].astype(int)
+est_edu[['jardin','primario','secundario']]=est_edu[['jardin','primario','secundario']].astype(int)
 
+#%% ANALISIS DE DATOS - CONSULTAS SQL
+
+"""
+EN ESTA SECCIÓN ESTAREMOS HACIENDO EL PUNTO DE CONSULTAS SQL
+DE LA SECCIÓN DE ANÁLISIS DE DATOS
+"""                 
                  
-                 
+#%% 
+
+consulta_1=dd.sql("""
+SELECT d.prov AS Provincia, d.depto AS Departamento, (CASE WHEN e.Jardines IS NULL THEN 0 ELSE e.Jardines END) AS Jardines,
+        d.pobl_jardin AS "Poblacion Jardin", (CASE WHEN e.Primarias IS NULL THEN 0 ELSE e.Primarias END) AS Primarias,
+        d.pobl_primaria AS "Poblacion Primaria", (CASE WHEN e.Secundarias IS NULL THEN 0 ELSE e.Secundarias END) AS Secundarias,
+        d.pobl_secundaria AS "Poblacion Secundaria"
+FROM departamento AS d                    
+LEFT JOIN (SELECT id_depto, SUM(jardin) AS Jardines, SUM(primario) AS Primarias,
+           SUM(secundario) AS Secundarias
+           FROM est_edu
+           GROUP BY id_depto) AS e
+ON d.id_depto=e.id_depto
+ORDER BY Provincia ASC, Primarias DESC 
+                   """).df()
+                   
+consulta_2=dd.sql("""
+SELECT d.prov AS Provincia, d.depto AS Departamento, 
+        (CASE WHEN c.cant IS NULL THEN 0 ELSE c.cant END) AS "Cantidad de CC con cap>100"
+FROM departamento AS d
+LEFT JOIN (SELECT ID_DEPTO, COUNT(*) AS cant
+           FROM centro_cult
+           WHERE Capacidad>100
+           GROUP BY ID_DEPTO) AS c
+ON d.id_depto=c.ID_DEPTO 
+ORDER BY Provincia ASC, "Cantidad de CC con cap>100" DESC                
+                  """).df()                   
+
+consulta_3=dd.sql("""
+SELECT d.prov AS Provincia, d.depto AS Departamento,
+        (CASE WHEN e.cant_ee IS NULL THEN 0 ELSE e.cant_ee END) AS Cant_EE,
+        (CASE WHEN c.cant_cc IS NULL THEN 0 ELSE c.cant_cc END) AS Cant_CC,
+        p.pobl_total AS "Población total"
+FROM departamento AS d
+INNER JOIN poblacion AS p
+ON p.pobl_jardin=d.pobl_jardin AND p.pobl_primaria=d.pobl_primaria
+    AND p.pobl_secundaria=d.pobl_secundaria
+LEFT JOIN (SELECT id_depto, COUNT(*) AS cant_ee
+           FROM est_edu
+           GROUP BY id_depto) AS e
+ON e.id_depto=d.id_depto
+LEFT JOIN (SELECT ID_DEPTO, COUNT(*) AS cant_cc
+           FROM centro_cult
+           GROUP BY ID_DEPTO) AS c
+ON c.ID_DEPTO=d.id_depto    
+ORDER BY Cant_EE DESC, Cant_CC DESC, Provincia ASC, Departamento ASC         
+                  """).df()
+
+
