@@ -1,7 +1,7 @@
 import pandas as pd
 import duckdb as dd
 #%% cargo los datasets
-centros_cult=pd.read_csv('centros_culturales.csv')
+centros=pd.read_csv('centros_culturales.csv')
 padron_ee=pd.read_excel('2022_padron_oficial_establecimientos_educativos.xlsx',skiprows=6)
 censo=pd.read_excel('padron_poblacion.xlsX')
 
@@ -13,6 +13,13 @@ ESTAS TABLAS SON:
     departamento, poblacion, centro_cult, mail_centros, usa_mail y est_edu
 """
 
+#%% Creacion de la tabla provincia
+
+#junto las provincias con sus respectivos id_prov
+provincia=dd.sql("""
+SELECT DISTINCT ID_PROV, Provincia AS prov
+FROM centros                
+                """).df()
 
 #%% Creacion de la tabla departamento
 
@@ -100,11 +107,6 @@ WHERE p1.nivel='Jardin'
 ORDER BY p1.id_depto
                    """).df()
 
-#junto las provincias con sus respectivos id_prov
-id_provs=dd.sql("""
-SELECT DISTINCT ID_PROV, Provincia AS prov
-FROM centros_cult                
-                """).df()
 
 #calculo y asigno id_prov a cada depto, además corrijo los id_depto de dos deptos de tiera del fuego        
 departamento_prov=dd.sql("""
@@ -120,7 +122,7 @@ departamento=dd.sql("""
 SELECT p.prov, d.depto, d.id_depto, d.pobl_jardin, d.pobl_primaria,
         d.pobl_secundaria
 FROM departamento_prov AS d
-INNER JOIN id_provs AS p
+INNER JOIN provincia AS p
 ON p.ID_PROV=d.id_prov                     
                     """).df()
 
@@ -134,7 +136,7 @@ FROM departamento_prov
 
 #%% Creacion de la tabla centro_cult
 
-cc_uno=centros_cult[['ID_DEPTO','Nombre', 'Mail ','Capacidad']]
+cc_uno=centros[['ID_DEPTO','Nombre', 'Mail ','Capacidad']]
 
 cc_uno['ID_cc']=0 #ID_cc será la clave de la tabla
 
@@ -166,7 +168,7 @@ for i,e in mail_cent.iterrows():
     mails=separar_mails(e['Mail'])
     for j in mails:
         filas+=[{'ID_cc':e['ID_cc'],'Mail':j}]
-mail=pd.DataFrame(filas)
+mail=pd.DataFrame(data=filas)
 
 #mail_aux recupera los ID_cc que tenían '' en Mail
 usa_mail_aux=dd.sql("""
@@ -186,6 +188,11 @@ WHERE Mail LIKE '%@%'
 
 def solo_dominio(x):
     return x.split('@')[1].split('.')[0].lower()
+
+mail_centros['dominio']=''
+
+for i,e in mail_centros.iterrows():
+    mail_centros.loc[i,'dominio']=solo_dominio(e['Mail'])
 
 
 #%% Creacion de la tabla usa_mail
@@ -234,10 +241,9 @@ est_edu[['jardin','primario','secundario']]=est_edu[['jardin','primario','secund
 
 """
 EN ESTA SECCIÓN ESTAREMOS HACIENDO EL PUNTO DE CONSULTAS SQL
-DE LA SECCIÓN DE ANÁLISIS DE DATOS
 """                 
                  
-#%% 
+#%% Creo la consulta_1
 
 consulta_1=dd.sql("""
 SELECT d.prov AS Provincia, d.depto AS Departamento, (CASE WHEN e.Jardines IS NULL THEN 0 ELSE e.Jardines END) AS Jardines,
@@ -252,6 +258,8 @@ LEFT JOIN (SELECT id_depto, SUM(jardin) AS Jardines, SUM(primario) AS Primarias,
 ON d.id_depto=e.id_depto
 ORDER BY Provincia ASC, Primarias DESC 
                    """).df()
+ 
+#%% Creo la consulta_2
                    
 consulta_2=dd.sql("""
 SELECT d.prov AS Provincia, d.depto AS Departamento, 
@@ -264,6 +272,8 @@ LEFT JOIN (SELECT ID_DEPTO, COUNT(*) AS cant
 ON d.id_depto=c.ID_DEPTO 
 ORDER BY Provincia ASC, "Cantidad de CC con cap>100" DESC                
                   """).df()                   
+
+#%% Creo la consulta_3
 
 consulta_3=dd.sql("""
 SELECT d.prov AS Provincia, d.depto AS Departamento,
@@ -284,5 +294,41 @@ LEFT JOIN (SELECT ID_DEPTO, COUNT(*) AS cant_cc
 ON c.ID_DEPTO=d.id_depto    
 ORDER BY Cant_EE DESC, Cant_CC DESC, Provincia ASC, Departamento ASC         
                   """).df()
+
+
+#%% Creo la consulta_4
+
+usa_dominio=dd.sql("""
+SELECT u.ID_cc, m.dominio
+FROM usa_mail AS u
+LEFT JOIN mail_centros AS m
+ON m.Mail=u.Mail            
+           """).df()
+
+depto_dominio=dd.sql("""
+SELECT c.ID_DEPTO, MAX(u.dominio) AS dominio
+FROM centro_cult AS c
+LEFT JOIN usa_dominio AS u
+ON c.ID_cc=u.ID_cc 
+GROUP BY ID_DEPTO           
+           """).df()
+
+consulta_4=dd.sql("""
+SELECT d.prov AS Provincia, d.depto AS Departamento, dd.dominio AS "Dominio más frecuente en CC"
+FROM departamento AS d
+LEFT JOIN depto_dominio AS dd
+ON dd.ID_DEPTO=d.id_depto
+ORDER BY Provincia, Departamento                  
+                  """).df()
+
+#%% ANALISI DE DATOS - VISUALIZACION
+
+"""
+EN ESTA SECCIÓN ESTAREMOS HACIENDO EL PUNTO DE VISUALIZACION
+DE LA SECCIÓN DE ANÁLISIS DE DATOS
+"""
+
+#%%
+
 
 
